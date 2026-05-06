@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "blackbox-recorder"
+description = "Forensic pre-commit verification tool for AI coding agent sessions"
+requires-python = ">=3.14"
+readme = "README.md"
+license = "MIT"
+dynamic = ["version"]
+
+authors = [
+  { name = "Agent Black Box Recorder", email = "dev@blackbox-recorder.dev" },
+]
+
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Programming Language :: Python :: 3.14",
+  "License :: OSI Approved :: MIT License",
+]
+
+dependencies = [
+  "pydantic>=2.10",
+  "typer>=0.15",
+  "rich>=15.0",
+  "httpx>=0.28",
+  "pyyaml>=6.0",
+]
+
+[project.scripts]
+blackbox = "blackbox.cli:main"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.targets.wheel]
+packages = ["blackbox/"]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "pytest-cov>=6",
+  "ruff>=0.11",
+  "mypy>=1.15",
+]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
