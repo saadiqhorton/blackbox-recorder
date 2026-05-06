@@ -32,8 +32,21 @@ def _assert_valid_pipeline_output(data: dict) -> None:
     assert "evidence_completeness" in s, "missing evidence_completeness"
     assert "claim_veracity" in s, "missing claim_veracity"
     assert "risk" in s, "missing risk"
+
+    # Type and range validation
+    ec = s["evidence_completeness"]
+    assert "percentage" in ec, "missing ec.percentage"
+    assert isinstance(ec["percentage"], int), f"ec.percentage must be int, got {type(ec['percentage'])}"
+    assert 0 <= ec["percentage"] <= 100, f"ec.percentage out of range: {ec['percentage']}"
+
+    cv = s["claim_veracity"]
+    assert "percentage" in cv, "missing cv.percentage"
+    assert isinstance(cv["percentage"], int), f"cv.percentage must be int, got {type(cv['percentage'])}"
+    assert 0 <= cv["percentage"] <= 100, f"cv.percentage out of range: {cv['percentage']}"
+
     assert "label" in s["risk"], "missing risk.label"
-    assert "percentage" in s["evidence_completeness"], "missing ec.percentage"
+    assert isinstance(s["risk"]["label"], str), "risk.label must be str"
+    assert s["risk"]["label"] in ("LOW", "MEDIUM", "HIGH"), f"unknown risk label: {s['risk']['label']}"
 
 
 # ---------------------------------------------------------------------------
@@ -119,11 +132,8 @@ def test_e2e_corrupt_session(mock_extractor_cls):
             "analyze", "--json", str(FIXTURES_DIR / "corrupt_session.jsonl"),
         ])
 
-    # Must not crash with a "No session file" error
-    assert "No session file" not in result.stdout, "should not report missing file"
-
-    if result.exit_code == 0:
-        data = json.loads(result.stdout)
-        _assert_valid_pipeline_output(data)
-        # At least the valid lines should have been parsed (4+ valid events)
-        assert len(data["session"].get("id", "")) > 0
+    assert result.exit_code == 0, f"exit_code={result.exit_code}, stdout={result.stdout[:500]}"
+    data = json.loads(result.stdout)
+    _assert_valid_pipeline_output(data)
+    # At least the valid lines should have been parsed (4+ valid events)
+    assert len(data["session"].get("id", "")) > 0
