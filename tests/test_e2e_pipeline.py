@@ -8,11 +8,22 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from typer.testing import CliRunner
 
 from blackbox.cli import app
 
 runner = CliRunner()
+
+
+# Reset module-level git cache after each E2E test — isolated_filesystem() changes
+# CWD to a temp dir, and EvidenceCollector._check_is_git_repo() caches the result
+# globally. Without resetting, subsequent tests see a stale cached "not a git repo".
+@pytest.fixture(autouse=True)
+def _reset_git_cache():
+    yield
+    import blackbox.pipeline.evidence_collector as _ec
+    _ec._GIT_CACHE = None
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "test_fixtures"
 
