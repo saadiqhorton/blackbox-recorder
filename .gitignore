@@ -1,3 +1,7 @@
 .blackbox/runs/
 .blackbox/
 .gstack/
+__pycache__/
+*.pyc
+.env
+.env.*
