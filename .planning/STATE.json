@@ -1,0 +1,68 @@
+{
+  "workflow": "gsd-superpowers-gstack",
+  "platform": "claude",
+  "phases": [
+    {
+      "num": 1,
+      "name": "Project Skeleton, Models, Config & Storage",
+      "status": "completed",
+      "file": ".planning/phases/phase-1.md",
+      "plan": ".planning/phases/01-PLAN.md",
+      "context": ".planning/phases/01-CONTEXT.md",
+      "research": ".planning/phases/01-RESEARCH.md"
+    },
+    {
+      "num": 2,
+      "name": "Claude Code JSONL Adapter + Test Fixtures",
+      "status": "completed",
+      "file": ".planning/phases/phase-2.md",
+      "plan": ".planning/phases/02-PLAN.md",
+      "context": ".planning/phases/02-CONTEXT.md",
+      "research": ".planning/phases/02-RESEARCH.md"
+    },
+    {
+      "num": 3,
+      "name": "Claim Extraction + Evidence Collection",
+      "status": "completed",
+      "file": ".planning/phases/phase-3.md",
+      "plan": ".planning/phases/03-PLAN.md",
+      "context": ".planning/phases/03-CONTEXT.md",
+      "research": ".planning/phases/03-RESEARCH.md"
+    },
+    {
+      "num": 4,
+      "name": "Cross-Referencer, Scoring & Error Loop Detection",
+      "status": "completed",
+      "file": ".planning/phases/phase-4.md",
+      "plan": ".planning/phases/04-PLAN.md"
+    },
+    {
+      "num": 5,
+      "name": "Report Generator, Run Store & CLI",
+      "status": "completed",
+      "file": ".planning/phases/phase-5.md",
+      "context": ".planning/phases/05-CONTEXT.md"
+    },
+    {
+      "num": 6,
+      "name": "Tests, PyPI Packaging & CI",
+      "status": "completed",
+      "file": ".planning/phases/phase-6.md",
+      "plan": ".planning/phases/06-PLAN.md",
+      "context": ".planning/phases/06-CONTEXT.md"
+    }
+  ],
+  "current": 6,
+  "completed": [1, 2, 3, 4, 5, 6],
+  "spec": "SPEC.md",
+  "notes": [
+    "6 phases defined from SPEC.md — no phase exceeds ~50% context window",
+    "Phase 1 builds the foundation: package, models, config, storage",
+    "Architecture locked via prior plan-ceo-review + plan-eng-review sessions",
+    "Phase 2 complete: Claude Code JSONL adapter, test fixtures, 11 tests",
+    "Phase 3 complete: claim extractor, evidence collector, 10 tests across 2 waves",
+    "Phase 4 complete: cross-referencer, error loop detector, 10 tests — all passing",
+    "Phase 5 complete: ReportGenerator, RunStore save/load, CLI wiring — 45 total tests",
+    "Phase 6 complete: README, LICENSE, GitHub templates, CI workflow, E2E tests — 50 total tests"
+  ]
+}
