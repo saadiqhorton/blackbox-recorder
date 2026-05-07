@@ -1,6 +1,9 @@
 .blackbox/runs/
 .blackbox/
 .gstack/
+.planning/
+SOUL.md
+SPEC.md
 __pycache__/
 *.pyc
 .env
