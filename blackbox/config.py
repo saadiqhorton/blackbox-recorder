@@ -21,10 +21,15 @@ class ThresholdsConfig(BaseModel):
     min_veracity: int = 50
 
 
+class SessionConfig(BaseModel):
+    claude_dir: str = "~/.claude"
+
+
 class BlackboxConfig(BaseModel):
     llm: LLMConfig = LLMConfig()
     storage: StorageConfig = StorageConfig()
     thresholds: ThresholdsConfig = ThresholdsConfig()
+    session: SessionConfig = SessionConfig()
 
 
 _ENV_OVERRIDE_MAP: dict[str, list[str]] = {
@@ -33,6 +38,7 @@ _ENV_OVERRIDE_MAP: dict[str, list[str]] = {
     "BLACKBOX_LLM_BASE_URL": ["llm", "base_url"],
     "BLACKBOX_LLM_API_KEY": ["llm", "api_key"],
     "BLACKBOX_STORAGE_RUNS_DIR": ["storage", "runs_dir"],
+    "BLACKBOX_SESSION_CLAUDE_DIR": ["session", "claude_dir"],
     "BLACKBOX_MIN_COMPLETENESS": ["thresholds", "min_completeness"],
     "BLACKBOX_MIN_VERACITY": ["thresholds", "min_veracity"],
 }
@@ -111,6 +117,9 @@ def save_default_config(path: Path | None = None) -> None:
         "thresholds": {
             "min_completeness": 50,
             "min_veracity": 50,
+        },
+        "session": {
+            "claude_dir": "~/.claude",
         },
     }
     with open(target, "w") as f:

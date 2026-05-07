@@ -1,5 +1,6 @@
 import json
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from blackbox.config import (
     load_config,
     save_default_config,
 )
+from blackbox.discovery import find_latest_sessions, resolve_project_dir
 from blackbox.pipeline.claim_extractor import ClaimExtractor
 from blackbox.pipeline.cross_referencer import CrossReferencer
 from blackbox.pipeline.error_loop_detector import ErrorLoopDetector
@@ -28,6 +30,17 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+
+
+@dataclass
+class AnalysisResult:
+    session_info: dict
+    score: object
+    claims: list
+    evidence_set: object
+    error_loops: list
+    report: dict
+    event_count: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -52,139 +65,219 @@ def _config_set(config: dict, key: str, value):
 
 
 # ---------------------------------------------------------------------------
+# Pipeline helper (shared by single-session and --latest paths)
+# ---------------------------------------------------------------------------
+
+def _run_pipeline(session_path: Path, progress: Progress) -> AnalysisResult:
+    """Execute the full analysis pipeline on a single session file."""
+    # 1. Parse JSONL
+    progress.update(
+        progress.add_task("Parsing session file...", total=None),
+        description=f"Parsing {session_path.name}...",
+    )
+    adapter = ClaudeCodeAdapter()
+    event_model = adapter.ingest(session_path)
+
+    # 2. Collect evidence
+    progress.update(
+        progress.add_task("Collecting evidence...", total=None),
+        description="Collecting evidence...",
+    )
+    collector = EvidenceCollector()
+    evidence_set = collector.collect(event_model)
+
+    # 3. Extract claims (may fail -- LLM unavailable)
+    progress.update(
+        progress.add_task("Extracting claims with LLM...", total=None),
+        description="Extracting claims with LLM...",
+    )
+    try:
+        extractor = ClaimExtractor()
+        claims = extractor.extract_claims(event_model)
+    except Exception as e:
+        console.print(f"[yellow]Warning: LLM claim extraction failed ({e})[/yellow]")
+        console.print("[yellow]Continuing with partial report (no claims)[/yellow]")
+        claims = []
+
+    # 4. Cross-reference
+    progress.update(
+        progress.add_task("Cross-referencing claims against evidence...", total=None),
+        description="Cross-referencing claims against evidence...",
+    )
+    xref = CrossReferencer()
+    score = xref.cross_reference(claims, evidence_set)
+
+    # 5. Detect error loops
+    progress.update(
+        progress.add_task("Detecting error loops...", total=None),
+        description="Detecting error loops...",
+    )
+    detector = ErrorLoopDetector()
+    error_loops = detector.detect(event_model)
+
+    # 6. Session info
+    analyzed_at = datetime.now(timezone.utc).isoformat()
+    duration = ""
+    if event_model.events:
+        first_ts = event_model.events[0].timestamp
+        last_ts = event_model.events[-1].timestamp
+        if isinstance(first_ts, datetime) and isinstance(last_ts, datetime):
+            elapsed = (last_ts - first_ts).total_seconds()
+            duration = f"{elapsed:.0f}s"
+
+    session_info = {
+        "session_id": event_model.session_id,
+        "agent_type": event_model.agent_type,
+        "task": event_model.task or "",
+        "duration": duration,
+        "analyzed_at": analyzed_at,
+    }
+
+    # 7. Generate report
+    progress.update(
+        progress.add_task("Generating report...", total=None),
+        description="Generating report...",
+    )
+    generator = ReportGenerator()
+    report = generator.generate(session_info, score, claims, error_loops)
+
+    return AnalysisResult(
+        session_info=session_info,
+        score=score,
+        claims=claims,
+        evidence_set=evidence_set,
+        error_loops=error_loops,
+        report=report,
+        event_count=len(event_model.events),
+    )
+
+
+def _save_run(result: AnalysisResult, progress: Progress) -> str:
+    """Persist analysis results and return the run_id."""
+    run_id = uuid.uuid4().hex[:8]
+    progress.update(
+        progress.add_task("Saving results...", total=None),
+        description="Saving results...",
+    )
+    store = RunStore()
+    metadata = RunMetadata(
+        run_id=run_id,
+        created_at=datetime.now(timezone.utc),
+        agent_type=result.session_info.get("agent_type", ""),
+        task=result.session_info.get("task", ""),
+        event_count=result.event_count,
+        status="analyzed",
+    )
+    store.create_run(metadata)
+    store.save_evidence(run_id, result.evidence_set)
+    store.save_claims(run_id, result.claims)
+    store.save_score(run_id, result.score)
+    store.save_error_loops(run_id, result.error_loops)
+    store.save_report(run_id, result.report["json"])
+    return run_id
+
+
+# ---------------------------------------------------------------------------
 # analyze
 # ---------------------------------------------------------------------------
 
 @app.command()
 def analyze(
-    path: str = typer.Argument(..., help="Path to session JSONL file"),
+    path: str = typer.Argument(None, help="Path to session JSONL file"),
+    latest: bool = typer.Option(False, "--latest", "-l", help="Auto-discover most recent session(s)"),
+    sessions_count: int = typer.Option(1, "--sessions", "-n", help="Number of recent sessions (with --latest)"),
     json_output: bool = typer.Option(False, "--json", help="Machine-readable JSON output"),
 ):
     """Analyze a session file for claims, evidence, and verification scores."""
-    session_path = Path(path)
+    # --- Resolve session paths ---
+    session_paths: list[Path] = []
 
-    if not session_path.exists():
-        console.print(f"[red]No session file at {path}[/red]")
+    if latest:
+        cfg = load_config()
+        claude_dir = cfg.session.claude_dir
+        project_dir = resolve_project_dir(claude_dir)
+        session_paths = find_latest_sessions(project_dir, sessions_count)
+
+        if not session_paths:
+            console.print(f"[red]No Claude Code sessions found for this project.[/red]")
+            console.print(f"[yellow]Checked: {project_dir}[/yellow]")
+            raise SystemExit(1)
+    elif path:
+        p = Path(path)
+        if not p.exists():
+            console.print(f"[red]No session file at {path}[/red]")
+            raise SystemExit(1)
+        session_paths = [p]
+    else:
+        console.print("[red]Provide a session path or use --latest to auto-discover.[/red]")
         raise SystemExit(1)
 
-    run_id = uuid.uuid4().hex[:8]
-
+    # --- Run pipeline ---
+    results: list[AnalysisResult] = []
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         console=console,
         transient=True,
     ) as progress:
-        try:
-            # 1. Parse JSONL
-            progress.update(
-                progress.add_task("Parsing session file...", total=None),
-                description="Parsing session file...",
-            )
-            adapter = ClaudeCodeAdapter()
-            event_model = adapter.ingest(session_path)
-
-            # 2. Collect evidence
-            progress.update(
-                progress.add_task("Collecting evidence...", total=None),
-                description="Collecting evidence...",
-            )
-            collector = EvidenceCollector()
-            evidence_set = collector.collect(event_model)
-
-            # 3. Extract claims (may fail -- LLM unavailable)
-            progress.update(
-                progress.add_task("Extracting claims with LLM...", total=None),
-                description="Extracting claims with LLM...",
-            )
+        for sp in session_paths:
             try:
-                extractor = ClaimExtractor()
-                claims = extractor.extract_claims(event_model)
+                result = _run_pipeline(sp, progress)
+                _save_run(result, progress)
+                results.append(result)
+            except FileNotFoundError:
+                console.print(f"[red]Session file not found: {sp}[/red]")
+                raise SystemExit(1)
             except Exception as e:
-                console.print(f"[yellow]Warning: LLM claim extraction failed ({e})[/yellow]")
-                console.print("[yellow]Continuing with partial report (no claims)[/yellow]")
-                claims = []
+                console.print(f"[red]Error analyzing {sp.name}: {e}[/red]")
+                raise SystemExit(1)
 
-            # 4. Cross-reference
-            progress.update(
-                progress.add_task("Cross-referencing claims against evidence...", total=None),
-                description="Cross-referencing claims against evidence...",
-            )
-            xref = CrossReferencer()
-            score = xref.cross_reference(claims, evidence_set)
+        progress.update(
+            progress.add_task("[green]Done!", total=None),
+            description="[green]Done!",
+        )
 
-            # 5. Detect error loops
-            progress.update(
-                progress.add_task("Detecting error loops...", total=None),
-                description="Detecting error loops...",
-            )
-            detector = ErrorLoopDetector()
-            error_loops = detector.detect(event_model)
-
-            # 6. Session info
-            analyzed_at = datetime.now(timezone.utc).isoformat()
-            duration = ""
-            if event_model.events:
-                first_ts = event_model.events[0].timestamp
-                last_ts = event_model.events[-1].timestamp
-                if isinstance(first_ts, datetime) and isinstance(last_ts, datetime):
-                    elapsed = (last_ts - first_ts).total_seconds()
-                    duration = f"{elapsed:.0f}s"
-
-            session_info = {
-                "session_id": event_model.session_id,
-                "agent_type": event_model.agent_type,
-                "task": event_model.task or "",
-                "duration": duration,
-                "analyzed_at": analyzed_at,
-            }
-
-            # 7. Generate report
-            progress.update(
-                progress.add_task("Generating report...", total=None),
-                description="Generating report...",
-            )
-            generator = ReportGenerator()
-            report = generator.generate(session_info, score, claims, error_loops)
-
-            # 8. Save to RunStore
-            progress.update(
-                progress.add_task("Saving results...", total=None),
-                description="Saving results...",
-            )
-            store = RunStore()
-            metadata = RunMetadata(
-                run_id=run_id,
-                created_at=datetime.now(timezone.utc),
-                agent_type=event_model.agent_type,
-                task=event_model.task,
-                event_count=len(event_model.events),
-                status="analyzed",
-            )
-            store.create_run(metadata)
-            store.save_claims(run_id, claims)
-            store.save_evidence(run_id, evidence_set)
-            store.save_score(run_id, score)
-            store.save_error_loops(run_id, error_loops)
-            store.save_report(run_id, report["json"])
-
-            progress.update(
-                progress.add_task("[green]Done!", total=None),
-                description="[green]Done!",
-            )
-
-        except FileNotFoundError:
-            console.print(f"[red]No session file at {path}[/red]")
-            raise SystemExit(1)
-        except Exception as e:
-            console.print(f"[red]Error: {e}[/red]")
-            raise SystemExit(1)
-
-    # 9. Display results
+    # --- Display results ---
     if json_output:
-        console.print(json.dumps(report["json"], indent=2), markup=False)
+        if len(results) == 1:
+            console.print(json.dumps(results[0].report["json"], indent=2), markup=False)
+        else:
+            summary = _build_multi_summary(results)
+            console.print(json.dumps(summary, indent=2), markup=False)
     else:
-        console.print(report["markdown"])
+        for i, result in enumerate(results):
+            if len(results) > 1:
+                _print_session_header(result)
+            console.print(result.report["markdown"])
+
+
+def _build_multi_summary(results: list[AnalysisResult]) -> dict:
+    """Build a compact JSON summary across multiple sessions."""
+    return {
+        "sessions_analyzed": len(results),
+        "results": [
+            {
+                "session_id": r.session_info.get("session_id"),
+                "task": r.session_info.get("task"),
+                "score": {
+                    "evidence_completeness": r.score.evidence_completeness.evidenced_claims / r.score.evidence_completeness.total_claims if r.score.evidence_completeness.total_claims > 0 else 0,
+                    "claim_veracity": r.score.claim_veracity.matching_claims / r.score.claim_veracity.evidenced_claims if r.score.claim_veracity.evidenced_claims > 0 else 0,
+                    "risk_label": r.score.risk_label.value if r.score.risk_label else "unknown",
+                },
+            }
+            for r in results
+        ],
+    }
+
+
+def _print_session_header(result: AnalysisResult) -> None:
+    """Print a separator header for multi-session output."""
+    sid = result.session_info.get("session_id", "?")
+    task = result.session_info.get("task", "")
+    console.print(f"\n[bold cyan]── Session: {sid}[/bold cyan]")
+    if task:
+        console.print(f"[dim]{task}[/dim]")
+    console.print("")
 
 
 # ---------------------------------------------------------------------------
